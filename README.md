@@ -93,7 +93,7 @@ groupie-tracker/
 ---
 
 ## 🟢🌍 Find Groupie Tracker Basic Version in Railway!
-Visit: [Railway](https://groupie-tracker-basic-production.up.railway.app/)
+Visit: [Railway](https://groupie-tracker-full-version-production.up.railway.app/)
 
 ## 🔒 License
 This project is intended for internal or private use only and can be used for training and development.
