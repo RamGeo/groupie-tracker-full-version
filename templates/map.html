@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groupie Tracker - Map</title>
+    <link rel="stylesheet" href="/static/map.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <!-- Load MarkerClusterer from CDN with fallback -->
+    <script src="https://unpkg.com/@googlemaps/markerclustererplus/dist/index.min.js"></script>
+    <script>
+        // Fallback if MarkerClusterer fails to load
+        window.MarkerClusterer = window.MarkerClusterer || {
+            implement: function() {
+                console.warn('MarkerClusterer not loaded - using fallback');
+                return {
+                    addMarker: function() {},
+                    addMarkers: function() {},
+                    clearMarkers: function() {}
+                };
+            }
+        };
+    </script>
+</head>
+<body>
+    <div class="map-container">
+        <div class="map-header">
+            <h1 id="map-title">Concert Locations</h1>
+            <button onclick="window.history.back()" class="back-button">Back to Artist</button>
+        </div>
+        <div id="map"></div>
+    </div>
+    <script src="/static/map.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAe5uJA4VuyOdMJuKfClFlIV0yuGvF-Lc4&callback=initMap" async defer></script>
+</body>
+</html>
