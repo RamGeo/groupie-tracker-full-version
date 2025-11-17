@@ -1,13 +1,11 @@
 package handlers
 
 import (
-	"Groupie_Tracker/models"
 	"Groupie_Tracker/utils"
 	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
-	"sync"
 )
 
 // Convert data to JSON string
@@ -64,67 +62,14 @@ func HandleArtists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch artists data
-	var artists []models.Artist
-	err := utils.FetchData("https://groupietrackers.herokuapp.com/api/artists", &artists)
+	// Use shared data service with caching
+	artists, err := GetDataService().GetArtists()
 	if err != nil {
 		Handle500(w, r, err)
 		return
 	}
 
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var fetchErr error
-
-	for i := range artists {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-
-			var locations models.Location
-			var dates models.Date
-			var relations models.Relation
-
-			// Fetch locations
-			if err := utils.FetchData(artists[i].LocationsURL, &locations); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Fetch dates
-			if err := utils.FetchData(artists[i].DatesURL, &dates); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Fetch relations
-			if err := utils.FetchData(artists[i].RelationURL, &relations); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Store the fetched data
-			mu.Lock()
-			artists[i].Locations = locations.Locations
-			artists[i].Dates = dates.Dates
-			artists[i].Relations = relations
-			mu.Unlock()
-		}(i)
-	}
-	//It is used to wait for all concurrent goroutines to finish before continuing
-	wg.Wait()
-	//This checks if any error occurred while fetching the data for the artists
-	if fetchErr != nil {
-		Handle500(w, r, fetchErr)
-		return
-	}
-	//Renders the index.html template and writes the result to the HTTP response.
+	// Render template
 	err = templates.ExecuteTemplate(w, "index.html", artists)
 	if err != nil {
 		Handle500(w, r, err)

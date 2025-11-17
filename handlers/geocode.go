@@ -3,18 +3,29 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
 	"os"
+	"sync"
 )
 
-// Cache variables
-var geocodeCache = make(map[string]struct {
-	lat float64
-	lng float64
-})
+// Cache variables with thread safety
+var (
+	geocodeCache = make(map[string]struct {
+		lat float64
+		lng float64
+	})
+	geocodeCacheMu sync.RWMutex
+)
+
+// Template cache for map.html
+var (
+	mapTemplate     *template.Template
+	mapTemplateErr  error
+	mapTemplateOnce sync.Once
+)
 
 type GeocodeResponse struct {
 	Results []struct {
@@ -41,14 +52,40 @@ func HandleMap(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Pragma", "no-cache")
     w.Header().Set("Expires", "0")
 
+	// Use cached template (parse once, reuse)
+	mapTemplateOnce.Do(func() {
+		mapTemplate, mapTemplateErr = template.ParseFiles("templates/map.html")
+	})
+	
+	if mapTemplateErr != nil {
+		http.Error(w, mapTemplateErr.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	http.ServeFile(w, r, "templates/map.html")
+	apiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
+	if apiKey == "" {
+		http.Error(w, "Google Maps API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		APIKey string
+	}{
+		APIKey: apiKey,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	mapTemplate.Execute(w, data)
 }
 
 // GeocodeLocation is exported (starts with capital letter)
 func GeocodeLocation(location string) (float64, float64, error) {
-	// Check cache first
-	if cached, exists := geocodeCache[location]; exists {
+	// Check cache first (thread-safe)
+	geocodeCacheMu.RLock()
+	cached, exists := geocodeCache[location]
+	geocodeCacheMu.RUnlock()
+	
+	if exists {
 		return cached.lat, cached.lng, nil
 	}
 
@@ -71,13 +108,13 @@ func GeocodeLocation(location string) (float64, float64, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return 0, 0, err
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("geocoding API returned status %d", resp.StatusCode)
 	}
 
 	var geocodeResp GeocodeResponse
-	if err := json.Unmarshal(body, &geocodeResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&geocodeResp); err != nil {
 		return 0, 0, err
 	}
 
@@ -88,11 +125,13 @@ func GeocodeLocation(location string) (float64, float64, error) {
 	lat := geocodeResp.Results[0].Geometry.Location.Lat
 	lng := geocodeResp.Results[0].Geometry.Location.Lng
 
-	// Store in cache before returning
+	// Store in cache before returning (thread-safe)
+	geocodeCacheMu.Lock()
 	geocodeCache[location] = struct {
 		lat float64
 		lng float64
 	}{lat, lng}
+	geocodeCacheMu.Unlock()
 
 	return lat, lng, nil
 }

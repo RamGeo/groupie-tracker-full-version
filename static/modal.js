@@ -57,18 +57,25 @@ const artistSounds = {
     "The Chainsmokers": "/static/mp3/The Chainsmokers.mp3",
 };
 
-// Preload Google Maps API
-const gmapScript = document.createElement('script');
-gmapScript.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyAe5uJA4VuyOdMJuKfClFlIV0yuGvF-Lc4&libraries=places';
-gmapScript.async = true;
-gmapScript.defer = true;
-document.head.appendChild(gmapScript);
+// Preload Google Maps API - fetch key from backend
+fetch('/api-key')
+    .then(response => response.json())
+    .then(data => {
+        const gmapScript = document.createElement('script');
+        gmapScript.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places`;
+        gmapScript.async = true;
+        gmapScript.defer = true;
+        document.head.appendChild(gmapScript);
 
-// Track API loading state
-window.mapAPIReady = false;
-gmapScript.onload = function() {
-    window.mapAPIReady = true;
-};
+        // Track API loading state
+        window.mapAPIReady = false;
+        gmapScript.onload = function() {
+            window.mapAPIReady = true;
+        };
+    })
+    .catch(error => {
+        console.error('Error loading Google Maps API key:', error);
+    });
 
 // function is designed to open a modal (a popup or overlay) on a webpage and populate it with dynamic content based on the arguments passed to it
 function openModal(name, image, members, firstAlbum, creationDate, relations, locations, dates) {

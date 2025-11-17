@@ -4,7 +4,6 @@ import (
 	"Groupie_Tracker/handlers"
 	"log"
 	"net/http"
-	"encoding/json"
 	"os"
 )
 
@@ -42,21 +41,10 @@ func main() {
 	mux.HandleFunc("/map", handlers.HandleMap)
 
 	// Geocode handler
-	mux.HandleFunc("/geocode", func(w http.ResponseWriter, r *http.Request) {
-	location := r.URL.Query().Get("location")
-	lat, lng, err := handlers.GeocodeLocation(location)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	mux.HandleFunc("/geocode", handlers.HandleGeocode)
 
-	response := map[string]float64{
-		"lat": lat,
-		"lng": lng,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-	})
+	// API key endpoint for JavaScript
+	mux.HandleFunc("/api-key", handlers.HandleAPIKey)
 
 	// Handle 404 error
 	mux.HandleFunc("/404", handlers.Handle404)

@@ -2,12 +2,10 @@ package handlers
 
 import (
 	"Groupie_Tracker/models"
-	"Groupie_Tracker/utils"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // HandleFilter handles filter requests
@@ -20,63 +18,9 @@ func HandleFilter(w http.ResponseWriter, r *http.Request) {
 	members := r.URL.Query()["members"]
 	locations := r.URL.Query()["locations"]
 
-	// Fetch artists data
-	var artists []models.Artist
-	err := utils.FetchData("https://groupietrackers.herokuapp.com/api/artists", &artists)
+	// Use shared data service with caching
+	artists, err := GetDataService().GetArtists()
 	if err != nil {
-		Handle500(w, r, err)
-		return
-	}
-
-	// Fetch additional data for each artist
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var fetchErr error
-
-	for i := range artists {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-
-			var locations models.Location
-			var dates models.Date
-			var relations models.Relation
-
-			// Fetch locations
-			if err := utils.FetchData(artists[i].LocationsURL, &locations); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Fetch dates
-			if err := utils.FetchData(artists[i].DatesURL, &dates); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Fetch relations
-			if err := utils.FetchData(artists[i].RelationURL, &relations); err != nil {
-				mu.Lock()
-				fetchErr = err
-				mu.Unlock()
-				return
-			}
-
-			// Store the fetched data
-			mu.Lock()
-			artists[i].Locations = locations.Locations
-			artists[i].Dates = dates.Dates
-			artists[i].Relations = relations
-			mu.Unlock()
-		}(i)
-	}
-
-	wg.Wait()
-	if fetchErr != nil {
 		Handle500(w, r, err)
 		return
 	}

@@ -12,10 +12,6 @@ import (
 	"sync"
 )
 
-// Handle Search Request
-var cachedArtists []models.Artist
-var cacheMutex sync.Mutex
-
 func HandleSearch(w http.ResponseWriter, r *http.Request) {
 	searchTerm := r.URL.Query().Get("query")
 
@@ -25,46 +21,73 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheMutex.Lock()
-	if cachedArtists == nil {
-		// Fetch artists data if not cached
-		err := utils.FetchData("https://groupietrackers.herokuapp.com/api/artists", &cachedArtists)
-		if err != nil {
-			Handle500(w, r, err)
-			cacheMutex.Unlock()
-			return
-		}
+	// Use shared data service - get basic info first (optimization)
+	cachedArtists, err := GetDataService().GetArtistsBasic()
+	if err != nil {
+		Handle500(w, r, err)
+		return
 	}
-	cacheMutex.Unlock()
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var prefixArtistSuggestions, partialArtistSuggestions []map[string]string
 	var memberSuggestions, locationSuggestions, firstAlbumSuggestions, creationDateSuggestions, concertDateSuggestions, concertLocationSuggestions []map[string]string
-	searchTermLower := strings.ToLower(searchTerm)
 
 	for _, artist := range cachedArtists {
 		wg.Add(1)
 		go func(artist models.Artist) {
 			defer wg.Done()
 
-			// Fetch locations for the artist
-			var locations models.Location
-			err := utils.FetchData(artist.LocationsURL, &locations)
-			if err != nil {
-				log.Printf("Error fetching locations for artist %s: %v", artist.Name, err)
-				return
-			}
-
-			// Fetch concert dates for the artist
-			var dates models.Date
-			err = utils.FetchData(artist.DatesURL, &dates)
-			if err != nil {
-				log.Printf("Error fetching dates for artist %s: %v", artist.Name, err)
-				return
-			}
-
+			searchTermLower := strings.ToLower(searchTerm)
 			artistNameLower := strings.ToLower(artist.Name)
+			
+			// Check artist name first - if it matches, we might not need location/date data
+			artistMatches := strings.HasPrefix(artistNameLower, searchTermLower) || 
+			                strings.Contains(artistNameLower, searchTermLower)
+			
+			// Check members, creation date, first album first (no API calls needed)
+			memberMatches := false
+			for _, member := range artist.Members {
+				if strings.Contains(strings.ToLower(member), searchTermLower) {
+					memberMatches = true
+					break
+				}
+			}
+			
+			creationDateMatches := strings.Contains(strconv.Itoa(artist.CreationDate), searchTermLower)
+			firstAlbumMatches := strings.Contains(strings.ToLower(artist.FirstAlbum), searchTermLower)
+			
+			// Only fetch location/date data if we haven't found matches yet
+			// or if search term suggests location/date search
+			needsLocationData := !artistMatches && !memberMatches && !creationDateMatches && !firstAlbumMatches
+			needsDateData := needsLocationData
+			
+			// Also fetch if search term explicitly mentions location/date
+			if strings.Contains(searchTermLower, "location") || 
+			   strings.Contains(searchTermLower, "concert") ||
+			   strings.Contains(searchTermLower, "date") {
+				needsLocationData = true
+				needsDateData = true
+			}
+
+			var locations models.Location
+			var dates models.Date
+
+			if needsLocationData {
+				err := utils.FetchData(artist.LocationsURL, &locations)
+				if err != nil {
+					log.Printf("Error fetching locations for artist %s: %v", artist.Name, err)
+					return
+				}
+			}
+
+			if needsDateData {
+				err := utils.FetchData(artist.DatesURL, &dates)
+				if err != nil {
+					log.Printf("Error fetching dates for artist %s: %v", artist.Name, err)
+					return
+				}
+			}
 
 			// Check artist name for prefix matches
 			if strings.HasPrefix(artistNameLower, searchTermLower) {
@@ -83,21 +106,23 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 				mu.Unlock()
 			}
 
-			// Check members
-			for _, member := range artist.Members {
-				if strings.Contains(strings.ToLower(member), searchTermLower) {
-					mu.Lock()
-					memberSuggestions = append(memberSuggestions, map[string]string{
-						"label": artist.Name,
-						"type":  "Member: " + member,
-					})
-					mu.Unlock()
+			// Check members (already checked above, but add to suggestions)
+			if memberMatches {
+				for _, member := range artist.Members {
+					if strings.Contains(strings.ToLower(member), searchTermLower) {
+						mu.Lock()
+						memberSuggestions = append(memberSuggestions, map[string]string{
+							"label": artist.Name,
+							"type":  "Member: " + member,
+						})
+						mu.Unlock()
+					}
 				}
 			}
 
-			// Check creation date
-			creationDate := strconv.Itoa(artist.CreationDate)
-			if strings.Contains(creationDate, searchTermLower) {
+			// Check creation date (already checked above)
+			if creationDateMatches {
+				creationDate := strconv.Itoa(artist.CreationDate)
 				mu.Lock()
 				creationDateSuggestions = append(creationDateSuggestions, map[string]string{
 					"label": artist.Name,
@@ -106,8 +131,8 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 				mu.Unlock()
 			}
 
-			// Check first album date
-			if strings.Contains(strings.ToLower(artist.FirstAlbum), searchTermLower) {
+			// Check first album date (already checked above)
+			if firstAlbumMatches {
 				mu.Lock()
 				firstAlbumSuggestions = append(firstAlbumSuggestions, map[string]string{
 					"label": artist.Name,
@@ -116,39 +141,43 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 				mu.Unlock()
 			}
 
-			// Check locations
-			for _, location := range locations.Locations {
-				if strings.Contains(strings.ToLower(location), searchTermLower) {
-					mu.Lock()
-					locationSuggestions = append(locationSuggestions, map[string]string{
-						"label": artist.Name,
-						"type":  "Location: " + formatLocation(location),
-					})
-					mu.Unlock()
+			// Check locations (only if fetched)
+			if needsLocationData {
+				for _, location := range locations.Locations {
+					if strings.Contains(strings.ToLower(location), searchTermLower) {
+						mu.Lock()
+						locationSuggestions = append(locationSuggestions, map[string]string{
+							"label": artist.Name,
+							"type":  "Location: " + formatLocation(location),
+						})
+						mu.Unlock()
+					}
+				}
+
+				// Check concert locations
+				for _, location := range locations.Locations {
+					if strings.Contains(strings.ToLower(location), searchTermLower) {
+						mu.Lock()
+						concertLocationSuggestions = append(concertLocationSuggestions, map[string]string{
+							"label": artist.Name,
+							"type":  "Concert Location: " + formatLocation(location),
+						})
+						mu.Unlock()
+					}
 				}
 			}
 
-			// Check concert dates
-			for _, date := range dates.Dates {
-				if strings.Contains(strings.ToLower(date), searchTermLower) {
-					mu.Lock()
-					concertDateSuggestions = append(concertDateSuggestions, map[string]string{
-						"label": artist.Name,
-						"type":  "Concert Date: " + date,
-					})
-					mu.Unlock()
-				}
-			}
-
-			// Check concert locations (e.g., "Greece")
-			for _, location := range locations.Locations {
-				if strings.Contains(strings.ToLower(location), searchTermLower) {
-					mu.Lock()
-					concertLocationSuggestions = append(concertLocationSuggestions, map[string]string{
-						"label": artist.Name,
-						"type":  "Concert Location: " + formatLocation(location),
-					})
-					mu.Unlock()
+			// Check concert dates (only if fetched)
+			if needsDateData {
+				for _, date := range dates.Dates {
+					if strings.Contains(strings.ToLower(date), searchTermLower) {
+						mu.Lock()
+						concertDateSuggestions = append(concertDateSuggestions, map[string]string{
+							"label": artist.Name,
+							"type":  "Concert Date: " + date,
+						})
+						mu.Unlock()
+					}
 				}
 			}
 		}(artist)
@@ -204,12 +233,3 @@ func formatLocation(location string) string {
 	return fmt.Sprintf("%s, %s", formattedCity, formattedCountry)
 }
 
-// Helper function to check if any member exactly matches the search term
-func containsExactMember(members []string, searchTerm string) bool {
-	for _, member := range members {
-		if strings.EqualFold(member, searchTerm) {
-			return true
-		}
-	}
-	return false
-}
